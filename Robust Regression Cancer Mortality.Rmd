@@ -1,0 +1,417 @@
+---
+title: "Project Robust Statistics"
+output: html_document
+date: "2026-05-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+We import libraries:
+```{r}
+library(moments)
+library(corrplot)
+library(car)
+library(robustHD)
+library(robustbase)
+library(mrfDepth)
+library(readxl)
+library(psych)
+library(corrplot)
+library(plot3D)
+library(MASS)
+library(Hmisc)
+library(moments)
+library(rrcov)
+library(factoextra)
+library(dplyr)
+library(cluster)
+library(corrplot)
+library(fossil)
+library(stats)
+library(cellWise)
+```
+
+
+We now introduce the dataset:
+```{r}
+load("cancer_data.Rdata")
+set.seed(1085999)
+rsub=sample(3047)[1:500]
+data=cancer_data[rsub, ]
+```
+
+```{r}
+load("data_USCancer.Rdata")
+originalfull=data_USCancer
+datanames=originalfull[rsub,]
+data$countyname=datanames$Geography
+```
+
+We start with an exploratory data analysis to have a better insight of our dataset.
+We start with a summary:
+```{r}
+summary(data)
+```
+We can see that the variables are on different scales.
+
+Then we check the skewness of our data:
+```{r}
+for (i in 1:27)
+  {
+    print(skewness(data[,i]))
+  }
+```
+We can see that many variables have a strong right-skewness, on the other hand only one has strong left-skewness. We should apply some transformations to decrease the skewness but before let's continue with the exploratory data analysis.
+
+We now plot corrplot to see if the variables are correlated (it is probably better to not consider all the variables but study them by group because if not the graph would become too difficult to study):
+```{r}
+numdata=data[,sapply(data, is.numeric)]
+correlation=cor(numdata, use='pairwise.complete.obs')
+corrplot(correlation, method='color', type='upper', tl.col='black', tl.cex=0.6, diag=FALSE)
+```
+From this we are able to see which one are almost not correlated and which are strongly correlated, so now we can consider them in different groups to make our study easier.
+```{r}
+varcore=c("target_deathrate", "incidencerate", "medincome", "povertypercent", "pctbachdeg25_over", "pctunemployed16_over")
+correlation1=cor(data[, varcore], use='pairwise.complete.obs')
+corrplot(correlation1, method='number', type='upper', tl.col='black', tl.cex=0.8, diag=FALSE, number.cex=0.9)
+```
+```{r}
+varsocio=c("medincome", "povertypercent", "pcths25_over", "pctbachdeg25_over", "pctunemployed16_over")
+correlation2=cor(data[, varsocio], use='pairwise.complete.obs')
+corrplot(correlation2, method='number', type='upper', tl.col='black', tl.cex=0.8, diag=FALSE, number.cex=0.9)
+```
+```{r}
+varhealth=c("target_deathrate", "pctprivatecoverage", "pctempprivcoverage", "pctpubliccoverage", "pctpubliccoveragealone")
+correlation3=cor(data[, varhealth], use='pairwise.complete.obs')
+corrplot(correlation3, method='number', type='upper', tl.col='black', tl.cex=0.8, diag=FALSE, number.cex=0.9)
+```
+We know that the classic correlation is extremely sensible to outliers so we will try also with the robust one:
+```{r}
+robustcov=covMcd(data[, varcore])
+robustcor=cov2cor(robustcov$cov)
+corrplot(robustcor, method='number', type='upper', tl.col='black', tl.cex=0.8, diag=FALSE, number.cex=0.9, main='Robust Correlation')
+```
+```{r}
+robustcovsocio=covMcd(data[, varsocio])
+robustcorsocio=cov2cor(robustcovsocio$cov)
+corrplot(robustcorsocio, method='number', type='upper', tl.col='black', tl.cex=0.8, diag=FALSE, number.cex=0.9, main='Robust Correlation')
+```
+```{r}
+robustcovhealth=covMcd(data[, varhealth])
+robustcorhealth=cov2cor(robustcovhealth$cov)
+corrplot(robustcorhealth, method='number', type='upper', tl.col='black', tl.cex=0.8, diag=FALSE, number.cex=0.9, main='Robust Correlation')
+```
+
+We now plot histograms and then QQ-plots to check normality:
+```{r}
+par(mfrow=c(2,6))
+for (i in 1:12)
+{
+  x=data[,i]
+  hist(x, freq=FALSE, main=colnames(data)[i])
+  mn=mean(x, na.rm=TRUE)
+  std=sd(x, na.rm=TRUE)
+  curve(dnorm(x, mean=mn, sd=std), col='red', lwd=2, add=TRUE)
+}
+par(mfrow=c(3,6))
+for (i in 13:27)
+{
+  x=data[,i]
+  hist(x, freq=FALSE, main=colnames(data)[i])
+  mn=mean(x, na.rm=TRUE)
+  std=sd(x, na.rm=TRUE)
+  curve(dnorm(x, mean=mn, sd=std), col='red', lwd=2, add=TRUE)
+}
+```
+Now we can plot the QQ-plots:
+```{r}
+par(mfrow=c(2,6))
+for (i in 1:12){
+  qqnorm(data[,i], pch=19 , main=colnames(data)[i])
+  qqline(data[,i], col='red', lwd=2)
+}
+par(mfrow=c(3,6))
+for (i in 13:27){
+  qqnorm(data[,i], pch=19 , main=colnames(data)[i])
+  qqline(data[,i], col='red', lwd=2)
+}
+```
+Some of them seems to follow a normal distribution just like "pctpubliccoverage", conversely others do not follow a normal distribution like "pctblack". We can check this by both looking at the histograms and also at the qqnorm plots.
+To have additional evidence we can also calculate the Shapiro-Wilk value:
+```{r}
+for (i in 1:27){
+  print(shapiro.test(data[,i]))
+}
+```
+We have checked that only two variables are normal: "pctpubliccovarage" and "pctempprivcov".
+
+We now study if some values are missing:
+```{r}
+colSums(is.na(data))
+```
+None of the values are missing!!
+
+We now check if we have some outliers:
+```{r}
+par(mfrow= c(2,6))
+for (i in 1:12){
+  adjbox(data[,i], main=colnames(data)[i], col='lightblue')
+}
+par(mfrow= c(3,6))
+for (i in 13:27){
+  adjbox(data[,i], main=colnames(data)[i], col='lightblue')
+}
+```
+We can see that some of the variables have outliers.
+
+We transform the strongly skewed variables (skewness<-1 and skewness>1)  to get a skewness closer to 0. We decide to use the function transfo as explained in the paper to make our calculation easier and more efficient. In this case we are using the YJ transformation, but it's important to note that we tried also with the boxcox, the issue was that it was not possible to apply because of the presence of values <=0.
+Here you can find a proof that it is not possible to apply the box-cox transformation:
+```{r}
+checkboxcox=function(dataset){
+  invalidcolumn=names(dataset)[sapply(dataset, function(x) any(x<=0, na.rm=TRUE))]
+  if (length(invalidcolumn)>0){
+    cat("We can't use Box-Cox directly\n")
+    cat("Invalid columns: ")
+    print(invalidcolumn)
+  }
+  else {
+    print("I can use Box-Cox")
+  }
+}
+checkboxcox(data)
+```
+If we wanted we could sum a small constant like 0.1, 0.01 or 0.001 to be able to apply the boxcox but in this case it is more efficient to directly apply the YJ transformation to the whole datset. Indeed another issue with adding a small constant is that if I have a lot of zeros adding it moves the distribution.
+
+We now reconstruct the dataset with the transformed  variables applying trasfo since it is able to see which variables need transformation and which not. It is quite important to underline that we isolate the covariates to apply DDC algorithm only to the explanatory variables, in this case the variable "target_deathrate" must not be imputed to prevent data leakage:
+```{r}
+xcovariate=numdata[,colnames(numdata)!='target_deathrate']
+xmatrix=as.matrix(xcovariate)
+tranform=transfo(xmatrix, type='YJ', robust=TRUE)
+xtrans=tranform$Y
+```
+We can use PCA to see what happens:
+```{r}
+pcaout=prcomp(xtrans, scale. = TRUE)
+fviz_eig(pcaout, addlabels = TRUE, ylim=c(0,60), barfill = 'steelblue', barcolor='steelblue', main='Scree Plot')
+fviz_pca_var(pcaout, repel=TRUE,gradient.cols=c('yellow', 'red', 'purple'),col.var='contrib', title='Map PCA variable')
+fviz_pca_ind(pcaout, col.ind='cos2', gradient.cols=c('yellow', 'red', 'purple'),geom='point', alpha.ind=0.6,  title='Map PCA Counties')
+
+
+```
+The PCA confirms multicollinearity, indeed an evidence are the tightly clustered variables vectors. The PCA map is characterized by a dispersed data cloud with some observations lying far from the central mass, suggesting the presence of outliers. In addition, the screeplot shows that the first two dimensions capture around the 50% of total variance. 
+
+To show that our transformation is good we calculate skewness:
+```{r}
+skewness(xtrans)
+#we can also compare the histograms before and after:
+par(mfrow=c(1,2))
+hist(xmatrix[, "medianage"], main='Before of transformation: medianage', freq=FALSE)
+hist(xtrans[, 'medianage'], main='After transformation: medianage', freq=FALSE)
+```
+The transformation was effective, indeed only one variable has |skewness|>1. "medianage" has a right skewness of 9.77. However, as we have explained previously it has some extreme wrong entry data. In addition, if we look at the two histograms we can see that the transformation changes the scale, but on the other hand we are still able to find anomalies, so that they don't get masked by the transformation. As a consequence a statistical transformation can't and should not mask this behavior, making our transformation satisfying.
+
+We can also check if the normality has improved through Shapiro-Wilk test:
+```{r}
+for (i in 1:ncol(xtrans)) {
+print(shapiro.test(xtrans[,i]))
+}
+```
+Through the Shapiro-Wilk we can see that now several variables pass the normality test (p>0.05). It's important to notice that the DDC algorithm performs optimally under Gaussian assumption, but strict normality is not a prerequisite. Indeed it just requires the absence of many heavy skewness, in order to avoid false positive outlier detection. Since now all the covariates satisfy this assumption (except for "medianage" but it is a problem in the dataset itself) we can apply the DDC algorithm. (Note: in our case it does not make sense to eliminate these data entry errors because the goal is to show that the model is able to detect them).
+
+
+We set the tuning parameter by setting 'tolProb=0.99' through DDCpars list. In this way we defined the tolerance probability threshold for identifying a cell as an outlier. We chose 0.99 as a parameter, to ensure that the DDC works only on actual outliers, preserving original data.
+```{r}
+outddc=DDC(xtrans, DDCpars=list(tolProb=0.99))
+cellMap(outddc$stdResid, columnlabels=colnames(xtrans), rowlabels=as.character(1:nrow(xtrans)))
+ximputed=outddc$Ximp
+```
+We can't have a good representation so we try again in a different way, we detect anomalies and then choose the counties with the highest anomalies, 
+We start with the standardize residuals created with DDC, so based on their value we can understand if they are outliers or not. Then we consider the absolute value and then sum those values for each rows. After we consider the first fifteen counties with the highest rowsum.
+```{r}
+anomaly=rowSums(abs(outddc$stdResid), na.rm=TRUE)
+worstindex=order(anomaly, decreasing=TRUE)[1:15]
+worstresiduals=outddc$stdResid[worstindex, ]
+cellMap(worstresiduals, columnlabels = colnames(xtrans), rowlabels = originalfull$geography[rsub[worstindex]])
+```
+
+Yellow=the value that the algorithm was predicting
+Red=the value is way higher than expected
+Orange=the value is higher than expected (but not too much)
+Blue=the value is way smaller than expected
+Purple=the value is smaller than expected (but not too much)
+White=missing data (that in this case we don't have)
+
+We can clearly see cell outliers, so based on the county name we can do an analysis.
+We also consider the row wise outliers to compare them with the cellwise ones:
+```{r}
+celloutliers=sum(abs(outddc$stdResid)>2.56, na.rm=TRUE)
+totalcell=nrow(xtrans)*ncol(xtrans)
+perccelloutliers=(celloutliers/totalcell)*100
+cat("Anomalous cell: ", perccelloutliers, "%\n")
+
+rowoutliers=outddc$indrows
+cat("Number outliers per row: ", length(rowoutliers), "\n")
+```
+Now we consider a row wise plot:
+```{r}
+anomaliesperow=rowSums(abs(outddc$stdResid)>2.56, na.rm=TRUE)
+plot(anomaliesperow, type='h', col='pink', lwd=1.5, main='Rowwise outliers', xlab='County', ylab='Number of anomalous cell')
+points(rowoutliers, anomaliesperow[rowoutliers], col='red', pch=16, cex=1.5)
+legend('topright', legend=c('normal county', 'rowise outlier'), col=c('pink','red'), pch=c(NA, 16), lty=c(1, NA), lwd=2, cex=0.5)
+```
+
+We can show how many anomalies we have for each variable:
+```{r}
+colanomalies=colSums(abs(outddc$stdResid)>2.56, na.rm=TRUE)/nrow(xtrans)*100
+par(mar=c(8,4,4,2))
+barplot(sort(colanomalies, decreasing=TRUE), las=2, col='steelblue', main='Percentage outliers per variable', ylab='% of outliers', cex.names=0.7)
+```
+```{r}
+source("cellLTS_code.R")
+```
+
+We study the influence of these outliers on the regression:
+```{r}
+target=data$target_deathrate
+dataraw=data.frame(target_deathrate=target, xtrans)
+dataddc=data.frame(target_deathrate=target, ximputed)
+```
+
+
+We can now train the linear regression model on both the clean dataset and the dirty one. Before of doing so we have to choose the hyperparameters to balance the trade off between robustness and efficiency. We decided to use setting='KS2014' because it is the most suitable one when having multiple predictors (Koller & Stahel). In this way the loss functions achieve the maximum breakdown point of 50% while maintaining an efficiency of 50% if errors were normally distributed.
+
+We can study multicollinearity, for vif>10 we have multicollinearity and for vif>30 we have strong multicollinearity. Indeed severe multicollinearity inflates the variance of the estimated coefficients leading to unstable p-value, for this reason we decided to perform a backward elimination. At each step the highest VIF(>10) was removed. This allowed a more stable and interpretable model.
+
+```{r}
+classicmodel = lm(target_deathrate ~ ., data = dataraw)
+vifval=vif(classicmodel)
+print('Initial vif: ') 
+print(vifval)
+#we can see that some of them have vif larger than 10 so we try to eliminate popest2015 as the first one
+classicmodel2=lm(target_deathrate~ . - popest2015, data = dataraw)
+vif2=vif(classicmodel2)
+print('new vif2: ')
+print(vif2) #now avgdeathsperyear  has vif<10
+classicmodel3=lm(target_deathrate~ . - popest2015- pctpubliccoverage, data = dataraw)
+vif3=vif(classicmodel3)
+print('new vif3: ')
+print(vif3) #now pctpubliccoveragealone has vif<10
+classicmodel4=lm(target_deathrate~ . - popest2015- pctpubliccoverage- medincome, data = dataraw)
+vif4=vif(classicmodel4)
+print('new vif4: ')
+print(vif4) 
+classicmodel5=lm(target_deathrate~ . - popest2015- pctpubliccoverage- medincome-pctprivatecoverage, data = dataraw)
+vif5=vif(classicmodel5)
+print('new vif5: ')
+print(vif5) 
+
+
+```
+IMPORTANT CAVEAT: we stopped the elimination at four variables to preserve the predictive power of the model (we tried with removing more variables but the results were not good), in this way we decided to accept some residuals multicollinearity to better highlight the masking effect in a higher-dimensional space.
+
+We only consider the new number of reduced variables:
+```{r}
+varrem = c("popest2015", "pctpubliccoverage", "medincome", "pctprivatecoverage")
+datarawfinal=dataraw[, !(names(dataraw)%in% varrem)]
+dataddcfinal=dataddc[,!(names(dataddc) %in% varrem)]
+xtransfinal=xtrans[, !(colnames(xtrans) %in% varrem)]
+classicmodelfinal=lm(target_deathrate~.,data=datarawfinal )
+modelcleanMMfinal=lmrob(target_deathrate~.,data=dataddcfinal, control = lmrob.control(setting="KS2014", max.it = 500))
+cellLTSmodfinal=cellLTS(xtransfinal, target)
+```
+
+
+```{r}
+coeffclassic=coef(classicmodelfinal)
+coeffrobddc=coef(modelcleanMMfinal)
+intercept1=cellLTSmodfinal$intercept
+coefficients1=cellLTSmodfinal$coefficients
+coeffcellts=c(intercept1, coefficients1)
+tablecompare=data.frame(
+  ClassicRaw=as.numeric(coeffclassic),
+  RobustDDC=as.numeric(coeffrobddc),
+  CellLTS=as.numeric(coeffcellts)
+)
+tablecompare=round(tablecompare, 3)
+rownames(tablecompare) = c("Intercept", colnames(xtransfinal))
+print(tablecompare)
+```
+First of all, we can see the masking effect because of the extreme values. An example is "pctwhite", indeed with the OLS estimator we got 0.530, while with DDC we got -3.606. In reality, white people have a lower probability of dying because of different socio-economic reasons, so the robust DDC was the only one able to spot this behavior. Then we can also see a scale distortion, if we look at "avgdeathperyear" and "avgnncount" we can find high value like |-152| and 140 compared to the cellLTS which are closer to zero. This probably happens because the variables are still dominated by some counties with extremely large values. At the end we can also see a good behavior of cellLTS with variable with entry error, infact it was able to trim the cells with extremely weird values (like 400 as an age).
+
+We can plot modelcleanMMfinal:
+```{r}
+plot(modelcleanMMfinal, which=3, main='Outlier Map:Robust Distance vs Residuals')
+```
+
+We now plot observed vs predicted:
+```{r}
+par(mfrow=c(1,3))
+plot(datarawfinal$target_deathrate, fitted(classicmodelfinal), xlab='Observed death rate', ylab='Predicted death rate', main='OLS on raw data', pch=16)
+abline(0,1, col='red', lwd=2, lty=2)
+
+plot(dataddcfinal$target_deathrate, fitted(modelcleanMMfinal), xlab='Observed death rate', ylab='Predicted death rate', main='MM-estimator in DDC data', pch=16)
+abline(0,1, col='red', lwd=2, lty=2)
+
+previsioncellLTS = as.matrix(cbind(1, cellLTSmodfinal$Ximp)) %*% cellLTSmodfinal$coefficients
+
+plot(datarawfinal$target_deathrate, previsioncellLTS, xlab = 'Observed death rate', ylab = 'Predicted death rate', main = 'cellLTS on raw data', pch = 16)
+abline(0, 1, col = 'red', lwd = 2, lty = 2)
+```
+The scatterplots compare the performances of the three models, the OLS shows high dispersion distorted by cellwise outliers, in the meanwhile also the CellLTS is an improvement compared to OLS but still more distorted than MM-estimator. We can conclude that the visually best one is the MM-estimator applied to the DDC imputed data thanks to the reconstruction of erroneous cells.
+
+```{r}
+weightsmm=modelcleanMMfinal$rweights
+obsnoweight=sum(weightsmm<0.5)
+cat(obsnoweight)
+worstcounty=which.min(weightsmm)
+
+```
+This means that around the 8% of counties have so strong outliers or leverage points that the algorithm has to mitigate their effect.
+
+We can also calculate the weights of cellLTS
+```{r}
+weightcellLTS=cellLTSmodfinal$W
+disregardedcells=sum(weightcellLTS==0)
+cat('Disregarded cell with cellLTS: ', disregardedcells, '\n')
+
+```
+The algorithm disregarded 580 cells, since we have around 11.000 total cells (22 variable*500 counties), this implies that around 5% of data are anomalous. This shows how much essential robust estimates are in this case.
+
+We can also compare the residuals scales just like they did in the paper:
+```{r}
+madclassic=mad(resid(classicmodelfinal))
+madddc=mad(resid(modelcleanMMfinal))
+madcellLts=mad(resid(cellLTSmodfinal))
+
+cat('MAD: \n')
+cat('OLS: ', madclassic)
+cat('\nMM-estimator: ', madddc)
+cat('\nCellLTS: ', madcellLts)
+
+```
+We can see that MM-estimator had the best MAD since smaller, while the worst one is the OLS one.
+
+```{r}
+sumclassic=summary(classicmodelfinal)
+sumclean=summary(modelcleanMMfinal)
+madtarget = mad(datarawfinal$target_deathrate)
+RcellLTS=1-(madcellLts/madtarget)^2
+cat('R-squared classic model: ', sumclassic$r.squared)
+cat('\nR-squared robust MM: ', sumclean$r.squared)
+cat('\nR-squared cellLTS: ', RcellLTS)
+pvalclassic=sumclassic$coefficients[,4]
+pvalclean=sumclean$coefficients[,4]
+signigclassic=names(pvalclassic[pvalclassic<0.05])
+signclean=names(pvalclean[pvalclean<0.05])
+cat('\nSignificative variable in classic but not MM robust: \n')
+print(setdiff(signigclassic, signclean))
+cat('\nSignificant variable in MM robust but not in classic: \n')
+print(setdiff(signclean, signigclassic))
+```
+We can see the effects of masking effect caused by data contamination. First of all, the goodness of fit ($R^2$) improves, increasing from 0.529 in the OLS to 0.832 in the MM estimator. This implies that the robust model is able to explain a larger portion of the variance in the target death rate. In addition, we also found a $R^2$ of 0.587 for cellLTS which is theoretically better than OLS but not compared to MM. This probably happens because LTS does not use imputed data, but just trims contaminated cells, while the MM tries to fill the cells characterized by weird values with more coherent values. Then, through the analysis of the p-value we can spot different behaviors. The classical model attributes significance to "pctasian", "pctbachdeg25_over" and "pctpubliccoveragealone" (NOTE: before using vif when considering all variables we got also "medianage", this was a consequence of the distortion driven by the pull of extreme outliers). On the other hand, the robust estimate finds other drivers of cancer mortality like "pctwhite", "pctunemployed16_over" and "birthrate". This shows that the the robust estimate was able to correct the classic OLS. We can also see that the main drivers of cancer mortality are connected to:
+-poverty and unemployment: in the United State access to preventive screening is reliant on employment based insurances. Due to lack of access a lot of people receive a cancer's diagnosis when it's too late and it has reached a terminal stage.
+-family and social support: researches indicates that living in a married household can influence positively survival rates. This happens because of two possible incomes, psychological support of the other person and sometimes because of a shared health insurance.
+-systematic disparities: usually counties with an higher proportion of ethnic minorities (a lower "pctwhite") suffer from healthcare disparities. They have less efficient hospitals, linguistic barriers and delayed diagnosis.
+
